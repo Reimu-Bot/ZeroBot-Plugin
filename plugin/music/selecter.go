@@ -21,6 +21,10 @@ import (
 	"github.com/wdvxdr1123/ZeroBot/message"
 )
 
+var (
+	longZhuURL = "https://www.hhlqilongzhu.cn/api/joox/juhe_music.php?msg=%v"
+)
+
 func init() {
 	control.AutoRegister(&ctrl.Options[*zero.Ctx]{
 		DisableOnDefault: false,
@@ -29,7 +33,8 @@ func init() {
 			"- 网易点歌[xxx]\n" +
 			"- 酷我点歌[xxx]\n" +
 			"- 酷狗点歌[xxx]\n" +
-			"- 咪咕点歌[xxx]",
+			"- 咪咕点歌[xxx]\n" +
+			"- qq点歌[xxx]\n",
 	}).OnRegex(`^(.{0,2})点歌\s?(.{1,25})$`).SetBlock(true).Limit(ctxext.LimitByUser).
 		Handle(func(ctx *zero.Ctx) {
 			// switch 平台
@@ -42,14 +47,39 @@ func init() {
 				ctx.SendChain(kugou(ctx.State["regex_matched"].([]string)[2]))
 			case "网易":
 				ctx.SendChain(cloud163(ctx.State["regex_matched"].([]string)[2]))
-			default: // 默认 QQ音乐
+			case "qq":
 				ctx.SendChain(qqmusic(ctx.State["regex_matched"].([]string)[2]))
+			default: // 默认聚合点歌
+				ctx.SendChain(longzhu(ctx.State["regex_matched"].([]string)[2]))
 			}
 		})
 }
 
+// longzhu 聚合平台
+func longzhu(keyword string) message.Segment {
+	data, _ := web.GetData(fmt.Sprintf(longZhuURL, url.QueryEscape(keyword)))
+	// 假设 data 是包含整个 JSON 数组的字节切片
+	results := gjson.ParseBytes(data).Array()
+	for _, result := range results {
+		if strings.Contains(strings.ToLower(result.Get("title").String()), strings.ToLower(keyword)) {
+			if musicURL := result.Get("full_track").String(); musicURL != "" {
+				return message.Record(musicURL)
+			}
+		}
+	}
+
+	results = gjson.GetBytes(data, "#.full_track").Array()
+	if len(results) > 0 {
+		if musicURL := results[0].String(); musicURL != "" {
+			return message.Record(musicURL)
+		}
+	}
+
+	return message.Text("点歌失败, 找不到 ", keyword, " 的相关结果")
+}
+
 // migu 返回咪咕音乐卡片
-func migu(keyword string) message.MessageSegment {
+func migu(keyword string) message.Segment {
 	headers := http.Header{
 		"Cookie":     []string{"audioplayer_exist=1; audioplayer_open=0; migu_cn_cookie_id=3ad476db-f021-4bda-ab91-c485ac3d56a0; Hm_lvt_ec5a5474d9d871cb3d82b846d861979d=1671119573; Hm_lpvt_ec5a5474d9d871cb3d82b846d861979d=1671119573; WT_FPC=id=279ef92eaf314cbb8d01671116477485:lv=1671119583092:ss=1671116477485"},
 		"csrf":       []string{"LWKACV45JSQ"},
@@ -75,7 +105,7 @@ func migu(keyword string) message.MessageSegment {
 }
 
 // kuwo 返回酷我音乐卡片
-func kuwo(keyword string) message.MessageSegment {
+func kuwo(keyword string) message.Segment {
 	headers := http.Header{
 		"Cookie":     []string{"Hm_lvt_cdb524f42f0ce19b169a8071123a4797=1610284708,1610699237; _ga=GA1.2.1289529848.1591618534; kw_token=LWKACV45JSQ; Hm_lpvt_cdb524f42f0ce19b169a8071123a4797=1610699468; _gid=GA1.2.1868980507.1610699238; _gat=1"},
 		"csrf":       []string{"LWKACV45JSQ"},
@@ -109,7 +139,7 @@ func kuwo(keyword string) message.MessageSegment {
 }
 
 // kugou 返回酷狗音乐卡片
-func kugou(keyword string) message.MessageSegment {
+func kugou(keyword string) message.Segment {
 	stamp := time.Now().UnixNano() / 1e6
 	hash := md5str(
 		fmt.Sprintf(
@@ -163,7 +193,7 @@ func kugou(keyword string) message.MessageSegment {
 }
 
 // cloud163 返回网易云音乐卡片
-func cloud163(keyword string) (msg message.MessageSegment) {
+func cloud163(keyword string) (msg message.Segment) {
 	requestURL := "http://music.163.com/api/search/get/web?type=1&limit=1&s=" + url.QueryEscape(keyword)
 	data, err := web.GetData(requestURL)
 	if err != nil {
@@ -175,7 +205,7 @@ func cloud163(keyword string) (msg message.MessageSegment) {
 }
 
 // qqmusic 返回QQ音乐卡片
-func qqmusic(keyword string) (msg message.MessageSegment) {
+func qqmusic(keyword string) (msg message.Segment) {
 	requestURL := "https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg?platform=yqq.json&key=" + url.QueryEscape(keyword)
 	data, err := web.RequestDataWith(web.NewDefaultClient(), requestURL, "GET", "", web.RandUA(), nil)
 	if err != nil {
